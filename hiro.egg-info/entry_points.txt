@@ -1,0 +1,3 @@
+[console_scripts]
+h = hiro.main:main
+hiro = hiro.main:main

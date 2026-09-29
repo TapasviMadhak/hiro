@@ -1,0 +1,239 @@
+Metadata-Version: 2.4
+Name: hiro
+Version: 0.1.0
+Summary: Claude Code-grade terminal AI coding assistant with multi-provider support and MCP
+License: MIT
+Keywords: ai,terminal,coding,mcp,cybersecurity,llm
+Classifier: Development Status :: 4 - Beta
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Software Development :: Libraries
+Classifier: Topic :: Terminals
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: prompt_toolkit>=3.0.47
+Requires-Dist: rich>=13.7.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: httpx-sse>=0.4.0
+Requires-Dist: anyio>=4.4.0
+Requires-Dist: tomli>=2.0.1
+Requires-Dist: tomli-w>=1.0.0
+Requires-Dist: pydantic>=2.7.0
+Requires-Dist: pygments>=2.18.0
+Requires-Dist: aiofiles>=23.2.1
+Requires-Dist: click>=8.1.7
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: pathspec>=0.12.1
+Provides-Extra: anthropic
+Requires-Dist: anthropic>=0.34.0; extra == "anthropic"
+Provides-Extra: openai
+Requires-Dist: openai>=1.47.0; extra == "openai"
+Provides-Extra: google
+Requires-Dist: google-genai>=2.0.0; extra == "google"
+Requires-Dist: google-generativeai>=0.8.0; extra == "google"
+Provides-Extra: groq
+Requires-Dist: groq>=0.11.0; extra == "groq"
+Provides-Extra: all
+Requires-Dist: anthropic>=0.34.0; extra == "all"
+Requires-Dist: openai>=1.47.0; extra == "all"
+Requires-Dist: google-genai>=2.0.0; extra == "all"
+Requires-Dist: google-generativeai>=0.8.0; extra == "all"
+Requires-Dist: groq>=0.11.0; extra == "all"
+
+# Hiro — Terminal AI Coding Assistant
+
+<p align="center">
+  <pre>
+  ██╗  ██╗██╗██████╗  ██████╗
+  ██║  ██║██║██╔══██╗██╔═══██╗
+  ███████║██║██████╔╝██║   ██║
+  ██╔══██║██║██╔══██╗██║   ██║
+  ██║  ██║██║██║  ██║╚██████╔╝
+  ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝ ╚═════╝
+  </pre>
+</p>
+
+**Hiro** is a Claude Code-grade terminal AI coding assistant with:
+- 🤖 **Multi-provider support** — Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Ollama, and any OpenAI-compatible API
+- 🔌 **MCP integration** — Connect BurpSuite, Nuclei, Metasploit, and any MCP server
+- 🔒 **Cybersecurity tooling** — Built-in `/scan`, `/burp`, `/audit`, `/payload`, `/secrets`, `/sqli`, `/xss` commands
+- ⚡ **Token-efficient** — No bloated pre-prompts. Zero mandatory system prompt.
+- 🛠  **35+ slash commands** — Model switching, context management, file ops, and more
+- 🎨 **Beautiful TUI** — Rich terminal output with syntax highlighting, themes, and streaming
+
+---
+
+## Installation
+
+```bash
+# Clone the repo
+git clone https://github.com/yourname/hiro
+cd hiro
+
+# Install with pip (editable mode)
+pip install -e ".[all]"
+
+# Or with specific providers only:
+pip install -e ".[anthropic]"   # Anthropic only
+pip install -e ".[openai]"      # OpenAI only
+pip install -e "."              # Core only (httpx-based)
+```
+
+## Quick Start
+
+```bash
+# Set your API key
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Start Hiro
+hiro
+
+# Or with a specific model
+hiro -m gpt-4o -k sk-...
+
+# One-shot query
+hiro "Explain this code: $(cat main.py)"
+
+# Use local Ollama
+hiro -m ollama/llama3.2
+
+# List all available models
+hiro --list-models
+```
+
+## Configuration
+
+Copy the example config to get started:
+
+```bash
+mkdir -p ~/.config/hiro
+cp hiro.toml.example ~/.config/hiro/config.toml
+```
+
+Then edit `~/.config/hiro/config.toml` with your API keys and MCP servers.
+
+## Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/model [name]` | Switch AI model |
+| `/key <provider> <key>` | Set API key |
+| `/temperature <val>` | Set temperature |
+| `/provider url <p> <url>` | Set custom base URL |
+| `/system [prompt]` | Set system prompt |
+| `/context` | Show context info |
+| `/compact [n]` | Compact conversation |
+| `/reset` | Clear conversation |
+| `/history [n]` | Show message history |
+| `/tokens` | Show token usage |
+| `/file <path>` | Add file to context |
+| `/import <url>` | Import URL to context |
+| `/diff [f1 f2]` | Show git/file diff |
+| `/cd <path>` | Change directory |
+| `/ls [path]` | List directory |
+| `/run <cmd>` | Run shell command |
+| `/shell` | Open interactive shell |
+| `/mcp list` | List MCP servers |
+| `/mcp tools` | List MCP tools |
+| `/mcp connect <name>` | Connect MCP server |
+| `/mcp call <tool> [args]` | Call MCP tool directly |
+| `/mcp resources` | List MCP resources |
+| `/mcp prompts` | List MCP prompts |
+| `/scan <target>` | Security scan (nmap/nuclei) |
+| `/burp <action>` | BurpSuite via MCP |
+| `/audit <target>` | Full security audit |
+| `/payload <type>` | Generate pentest payloads |
+| `/sqli <url>` | SQL injection test |
+| `/xss <url>` | XSS test |
+| `/secrets [path]` | Scan for secrets |
+| `/decode <str>` | Decode base64/JWT/hex |
+| `/hash <str>` | Hash a string |
+| `/save [name]` | Save session |
+| `/load [name]` | Load session |
+| `/config show` | Show config |
+| `/theme [name]` | Change color theme |
+| `/clear` | Clear screen |
+| `/exit` | Exit Hiro |
+
+## BurpSuite MCP Setup
+
+1. Install the BurpSuite MCP extension
+2. Configure in `~/.config/hiro/config.toml`:
+
+```toml
+[[mcp_servers]]
+name = "burp"
+command = ["node", "/path/to/burp-mcp-server/index.js"]
+transport = "stdio"
+enabled = true
+tags = ["security", "burp"]
+[mcp_servers.env]
+BURP_API_KEY = "your-key"
+BURP_URL = "http://localhost:1337"
+```
+
+3. Use from Hiro:
+```
+/burp tools              # List available BurpSuite tools
+/burp scan https://...   # Active scan
+/burp history            # View proxy history
+```
+
+## Multi-Provider Examples
+
+```bash
+# Anthropic Claude
+hiro -m claude-opus-4-5
+
+# OpenAI GPT-4o
+hiro -m gpt-4o
+export OPENAI_API_KEY="sk-..."
+
+# Google Gemini
+hiro -m gemini-2.5-pro
+export GOOGLE_API_KEY="AIza..."
+
+# Groq (fast inference)
+hiro -m llama-3.3-70b-versatile
+export GROQ_API_KEY="gsk_..."
+
+# DeepSeek
+hiro -m deepseek-chat
+export DEEPSEEK_API_KEY="sk-..."
+
+# OpenRouter (any model)
+hiro -m meta-llama/llama-3.2-90b --url https://openrouter.ai/api/v1
+export OPENROUTER_API_KEY="sk-or-..."
+
+# Local Ollama
+hiro -m ollama/qwen2.5-coder
+
+# Custom OpenAI-compatible endpoint
+hiro -m my-model --url http://localhost:8080/v1
+```
+
+## Token Efficiency
+
+Hiro is designed to minimize unnecessary token usage:
+- **No mandatory system prompt** — The AI gets your question immediately
+- **Smart context compaction** — Auto-compacts at 80% context usage
+- **Token tracking** — See exact token counts per response
+- **`/compact`** — Manually trim context when needed
+- **`/tokens`** — View full session token breakdown
+
+## Themes
+
+```bash
+/theme dark    # Default (dark with purple accents)
+/theme hacker  # Matrix green terminal aesthetic
+/theme nord    # Arctic blue-gray palette
+/theme light   # Light mode
+```
+
+## License
+
+MIT

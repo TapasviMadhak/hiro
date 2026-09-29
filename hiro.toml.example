@@ -1,0 +1,192 @@
+# Hiro Configuration File
+# Location: ~/.config/hiro/config.toml
+# Priority: CLI flags > env vars > this file > defaults
+
+# ─── Core Settings ────────────────────────────────────────────────────────────
+# Default model to use
+model = "claude-sonnet-4-5"
+
+# Provider (auto-detected from model name if not set)
+# provider = "anthropic"
+
+# Model temperature (0.0 = deterministic, 1.0 = creative)
+temperature = 0.0
+
+# System prompt (empty = token-efficient no-pre-prompt mode)
+# system_prompt = "You are a helpful assistant."
+
+# ─── API Keys ─────────────────────────────────────────────────────────────────
+# You can also set these as environment variables (recommended for security):
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY, etc.
+[api_keys]
+# anthropic = "sk-ant-..."
+# openai = "sk-..."
+# google = "AIza..."
+# groq = "gsk_..."
+# deepseek = "sk-..."
+# mistral = "..."
+# openrouter = "sk-or-..."
+
+# ─── Custom Base URLs ─────────────────────────────────────────────────────────
+# Override API endpoints (useful for proxies, local models, etc.)
+[base_urls]
+# ollama = "http://localhost:11434/v1"
+# openai = "http://localhost:8080/v1"  # LM Studio, etc.
+# openrouter = "https://openrouter.ai/api/v1"
+
+# ─── Agent Settings ───────────────────────────────────────────────────────────
+[agent]
+# Maximum agent turns per query
+max_turns = 50
+
+# Max tokens per model response
+max_tokens_per_turn = 8192
+
+# Token budget (auto-compact context when exceeded)
+token_budget = 200000
+
+# Auto-compact context when at 80% of budget
+auto_compact = true
+compact_threshold = 0.80
+
+# Execute multiple tools in parallel
+parallel_tools = true
+
+# ─── UI Settings ──────────────────────────────────────────────────────────────
+[ui]
+# Theme: dark | light | hacker | nord
+theme = "dark"
+
+# Syntax highlighting theme (Pygments themes)
+syntax_theme = "monokai"
+
+# Show token counts after each response
+show_token_count = true
+
+# Show response timing
+show_timing = true
+
+# Stream responses in real-time
+stream = true
+
+# Word wrap long lines
+word_wrap = true
+
+# ─── Security Settings ────────────────────────────────────────────────────────
+# Allow shell command execution (bash tool)
+allow_shell = true
+
+# Allow network requests (web_fetch tool)
+allow_network = true
+
+# Ask confirmation before running shell commands
+confirm_shell = false
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MCP SERVER CONFIGURATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+# Add MCP servers for extended capabilities.
+# Each server must have: name, command (for stdio) or url (for SSE)
+
+# ─── BurpSuite MCP ────────────────────────────────────────────────────────────
+# BurpSuite Pro with MCP extension
+# Install: https://github.com/PortSwigger/burp-mcp
+[[mcp_servers]]
+name = "burp"
+command = ["node", "/path/to/burp-mcp-server/index.js"]
+transport = "stdio"
+enabled = false  # Set to true when BurpSuite is running
+tags = ["security", "burp", "proxy"]
+description = "BurpSuite Pro MCP integration for web security testing"
+[mcp_servers.env]
+BURP_API_KEY = ""
+BURP_URL = "http://localhost:1337"
+
+# Alternative: SSE transport (if BurpSuite exposes SSE endpoint)
+# [[mcp_servers]]
+# name = "burp-sse"
+# url = "http://localhost:1337/sse"
+# transport = "sse"
+# enabled = false
+
+# ─── Nuclei Scanner ───────────────────────────────────────────────────────────
+# Fast vulnerability scanner
+# Install: go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+[[mcp_servers]]
+name = "nuclei"
+command = ["nuclei-mcp"]
+transport = "stdio"
+enabled = false
+tags = ["security", "scanner", "vuln"]
+description = "Nuclei vulnerability scanner via MCP"
+
+# ─── Filesystem MCP ───────────────────────────────────────────────────────────
+# Extended filesystem access
+# Install: npx @modelcontextprotocol/server-filesystem
+[[mcp_servers]]
+name = "filesystem"
+command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/"]
+transport = "stdio"
+enabled = false
+tags = ["files"]
+description = "Extended filesystem access via MCP"
+
+# ─── GitHub MCP ───────────────────────────────────────────────────────────────
+# GitHub repository access
+# Install: npx @modelcontextprotocol/server-github
+[[mcp_servers]]
+name = "github"
+command = ["npx", "-y", "@modelcontextprotocol/server-github"]
+transport = "stdio"
+enabled = false
+tags = ["git", "github"]
+description = "GitHub repository access and management"
+[mcp_servers.env]
+GITHUB_PERSONAL_ACCESS_TOKEN = ""
+
+# ─── Brave Search MCP ─────────────────────────────────────────────────────────
+[[mcp_servers]]
+name = "brave-search"
+command = ["npx", "-y", "@modelcontextprotocol/server-brave-search"]
+transport = "stdio"
+enabled = false
+tags = ["search", "web"]
+description = "Web search via Brave Search API"
+[mcp_servers.env]
+BRAVE_API_KEY = ""
+
+# ─── PostgreSQL MCP ───────────────────────────────────────────────────────────
+[[mcp_servers]]
+name = "postgres"
+command = ["npx", "-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"]
+transport = "stdio"
+enabled = false
+tags = ["database", "sql"]
+description = "PostgreSQL database access"
+
+# ─── Metasploit MCP ───────────────────────────────────────────────────────────
+# Metasploit Framework via MCP
+[[mcp_servers]]
+name = "metasploit"
+command = ["python3", "-m", "msf_mcp"]
+transport = "stdio"
+enabled = false
+tags = ["security", "exploit", "msf"]
+description = "Metasploit Framework integration"
+[mcp_servers.env]
+MSF_RPC_HOST = "localhost"
+MSF_RPC_PORT = "55553"
+MSF_RPC_USER = "msf"
+MSF_RPC_PASS = ""
+
+# ─── Custom MCP Server ────────────────────────────────────────────────────────
+# Template for adding custom MCP servers
+# [[mcp_servers]]
+# name = "my-server"
+# command = ["python3", "/path/to/my_mcp_server.py"]
+# transport = "stdio"
+# enabled = true
+# tags = ["custom"]
+# description = "My custom MCP server"
+# [mcp_servers.env]
+# MY_ENV_VAR = "value"
