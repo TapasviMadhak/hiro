@@ -161,22 +161,74 @@ class HiroRenderer:
             f"[dim]{preview}[/]"
         )
 
-    def print_usage(self, usage: Any, latency_ms: float = 0) -> None:
-        """Print token usage summary."""
+    def print_usage(
+        self,
+        usage: Any,
+        latency_ms: float = 0,
+        ctx_tokens: int = 0,
+        token_limit: int = 0,
+        steps: int = 0,
+        max_steps: int = 0,
+    ) -> None:
+        """Print token usage, context limits, usage percentage, duration, and steps."""
         if not self.config.show_token_count:
             return
 
-        parts = [
-            f"↑{usage.input_tokens:,}",
-            f"↓{usage.output_tokens:,}",
-        ]
-        if usage.cache_read_tokens:
-            parts.append(f"cache↑{usage.cache_read_tokens:,}")
+        parts = []
+
+        # 1. In / Out tokens
+        if hasattr(usage, "input_tokens") and hasattr(usage, "output_tokens"):
+            in_tok = usage.input_tokens
+            out_tok = usage.output_tokens
+            in_str = f"{in_tok/1000:.1f}k" if in_tok >= 10000 else f"{in_tok:,}"
+            out_str = f"{out_tok/1000:.1f}k" if out_tok >= 10000 else f"{out_tok:,}"
+            parts.append(f"↑{in_str}")
+            parts.append(f"↓{out_str}")
+
+        # 2. Cache read tokens
+        if getattr(usage, "cache_read_tokens", 0):
+            c_tok = usage.cache_read_tokens
+            c_str = f"{c_tok/1000:.1f}k" if c_tok >= 10000 else f"{c_tok:,}"
+            parts.append(f"cache↑{c_str}")
+
+        # 3. Context limit and usage %
+        if ctx_tokens > 0 and token_limit > 0:
+            pct = (ctx_tokens / token_limit) * 100
+            ctx_str = f"{ctx_tokens/1000:.1f}k" if ctx_tokens >= 1000 else str(ctx_tokens)
+            limit_str = f"{token_limit/1000:.0f}k" if token_limit >= 1000 else str(token_limit)
+
+            if pct >= 85:
+                pct_style = f"bold {self._t['error']}"
+            elif pct >= 65:
+                pct_style = f"bold {self._t['warning']}"
+            else:
+                pct_style = f"{self._t['secondary']}"
+
+            parts.append(f"ctx: {ctx_str}/{limit_str} ([{pct_style}]{pct:.1f}%[/])")
+        elif ctx_tokens > 0:
+            ctx_str = f"{ctx_tokens/1000:.1f}k" if ctx_tokens >= 1000 else str(ctx_tokens)
+            parts.append(f"ctx: {ctx_str}")
+
+        # 4. Latency / duration
         if latency_ms:
-            parts.append(f"{latency_ms/1000:.1f}s")
+            sec = latency_ms / 1000
+            if sec >= 60:
+                mins = int(sec // 60)
+                rem_sec = sec % 60
+                time_str = f"{mins}m {rem_sec:.1f}s"
+            else:
+                time_str = f"{sec:.1f}s"
+            parts.append(time_str)
+
+        # 5. Steps / iterations
+        if steps > 1 or (steps > 0 and max_steps > 0):
+            if max_steps > 0:
+                parts.append(f"{steps}/{max_steps} steps")
+            else:
+                parts.append(f"{steps} steps")
 
         self.console.print(
-            Text("  " + " · ".join(parts), style=f"dim {self._t['muted']}")
+            f"  [dim {self._t['muted']}]{' · '.join(parts)}[/]"
         )
 
     def print_error(self, message: str) -> None:

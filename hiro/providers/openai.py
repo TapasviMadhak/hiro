@@ -196,10 +196,16 @@ class OpenAIProvider(BaseProvider):
                 for tc_delta in delta.tool_calls:
                     idx = tc_delta.index
                     if idx not in tool_calls_acc:
+                        # First delta for this tool call — capture ALL fields including args.
+                        # Some models (Kimi K3, GLM, DeepSeek) send the complete arguments
+                        # in the very first chunk alongside the function name.
+                        first_args = ""
+                        if tc_delta.function and tc_delta.function.arguments:
+                            first_args = tc_delta.function.arguments
                         tool_calls_acc[idx] = {
                             "id": tc_delta.id or "",
                             "name": tc_delta.function.name if tc_delta.function else "",
-                            "args": "",
+                            "args": first_args,
                         }
                     else:
                         if tc_delta.id:
@@ -209,10 +215,7 @@ class OpenAIProvider(BaseProvider):
                                 tool_calls_acc[idx]["name"] = tc_delta.function.name
                             if tc_delta.function.arguments:
                                 tool_calls_acc[idx]["args"] += tc_delta.function.arguments
-                                yield StreamChunk(tool_call_delta={
-                                    "index": idx,
-                                    "partial_args": tc_delta.function.arguments,
-                                })
+
 
             if finish:
                 # Emit completed tool calls

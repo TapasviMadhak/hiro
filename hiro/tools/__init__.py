@@ -28,7 +28,7 @@ def register_tool(tool: ToolDefinition) -> ToolDefinition:
 
 def get_builtin_tools(allow_shell: bool = True) -> list[ToolDefinition]:
     if allow_shell:
-        return _BUILTIN_TOOLS
+        return list(_BUILTIN_TOOLS)
     return [t for t in _BUILTIN_TOOLS if t.name not in ("bash", "shell")]
 
 
@@ -148,7 +148,9 @@ BASH = register_tool(ToolDefinition(
     description=(
         "Execute a shell command and return output. "
         "Use for running tests, builds, git operations, and system commands. "
-        "Commands run in the current working directory."
+        "Commands run in the current working directory. "
+        "IMPORTANT: Store temporary test dumps, downloads, and curl outputs in the temporary scratch directory "
+        "($HIRO_SCRATCH_DIR or %HIRO_SCRATCH_DIR%), NOT in the project root."
     ),
     parameters={
         "type": "object",
@@ -186,10 +188,21 @@ WEB_FETCH = register_tool(ToolDefinition(
 class BuiltinToolExecutor:
     """Executes built-in tools."""
 
-    def __init__(self, cwd: str = "", allow_shell: bool = True, allow_network: bool = True) -> None:
+    def __init__(
+        self,
+        cwd: str = "",
+        allow_shell: bool = True,
+        allow_network: bool = True,
+        scratch_dir: str = "",
+    ) -> None:
         self.cwd = Path(cwd or os.getcwd())
         self.allow_shell = allow_shell
         self.allow_network = allow_network
+        self.scratch_dir = Path(scratch_dir) if scratch_dir else (Path.home() / ".config" / "hiro" / "scratch")
+        try:
+            self.scratch_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
     def _resolve(self, path: str) -> Path:
         p = Path(path)
@@ -430,6 +443,9 @@ class BuiltinToolExecutor:
 
     async def _bash(self, command: str, timeout: int = 120, cwd: str = "", **_) -> str:
         work_dir = self._resolve(cwd) if cwd else self.cwd
+        env = dict(os.environ)
+        env["HIRO_SCRATCH_DIR"] = str(self.scratch_dir)
+        env["SCRATCH_DIR"] = str(self.scratch_dir)
 
         try:
             if sys.platform == "win32":
@@ -439,6 +455,7 @@ class BuiltinToolExecutor:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(work_dir),
+                    env=env,
                 )
             else:
                 proc = await asyncio.create_subprocess_shell(
@@ -448,6 +465,7 @@ class BuiltinToolExecutor:
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(work_dir),
                     executable="/bin/bash",
+                    env=env,
                 )
 
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -478,6 +496,7 @@ class BuiltinToolExecutor:
                     timeout=timeout,
                     encoding="utf-8",
                     errors="replace",
+                    env=env,
                 )
             try:
                 completed = await asyncio.to_thread(_sync_run)

@@ -23,18 +23,23 @@
 
 ## Installation
 
+### Via NPM (Recommended)
+```bash
+# Install globally on any device
+npm install -g hiro-ai
+
+# Run immediately without install
+npx hiro-ai
+```
+
+### Via Python / Git
 ```bash
 # Clone the repo
-git clone https://github.com/yourname/hiro
+git clone https://github.com/TapasviMadhak/hiro.git
 cd hiro
 
-# Install with pip (editable mode)
+# Install in editable mode
 pip install -e ".[all]"
-
-# Or with specific providers only:
-pip install -e ".[anthropic]"   # Anthropic only
-pip install -e ".[openai]"      # OpenAI only
-pip install -e "."              # Core only (httpx-based)
 ```
 
 ## Quick Start

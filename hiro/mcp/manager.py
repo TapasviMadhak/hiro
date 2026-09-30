@@ -26,12 +26,26 @@ class MCPManager:
         self._connected: set[str] = set()
         self._errors: dict[str, str] = {}
 
+    def _remove_server_data(self, name: str) -> None:
+        """Remove all tools, resources, and prompts registered by a server."""
+        for tool_name in list(self._tool_server_map.keys()):
+            if self._tool_server_map[tool_name] == name:
+                del self._tool_server_map[tool_name]
+                self._tools.pop(tool_name, None)
+        for uri in list(self._resources.keys()):
+            if self._resources[uri].server_name == name:
+                del self._resources[uri]
+        for pname in list(self._prompts.keys()):
+            if self._prompts[pname].server_name == name:
+                del self._prompts[pname]
+
     async def connect_server(self, config: MCPServerConfig) -> bool:
         """Connect to an MCP server. Returns True on success."""
         if not config.enabled:
             return False
 
         name = config.name
+        self._remove_server_data(name)
         try:
             if config.transport == MCPTransport.STDIO or not config.url:
                 cmd = config.command
@@ -63,10 +77,10 @@ class MCPManager:
         try:
             tools = await client.list_tools()
             for tool in tools:
-                full_name = f"{name}__{tool.name}" if tool.name in self._tools else tool.name
                 tool.server_name = name
-                self._tools[full_name] = tool
-                self._tool_server_map[full_name] = name
+                self._tools[tool.name] = tool
+                self._tool_server_map[tool.name] = name
+                self._tool_server_map[f"{name}__{tool.name}"] = name
         except Exception:
             pass
 
@@ -102,11 +116,10 @@ class MCPManager:
                 is_error=True,
             )
 
-        # Resolve actual tool name (may have server prefix stripped)
+        # Resolve actual tool name (strip server prefix if present)
         actual_name = tool_name
-        tool = self._tools.get(tool_name)
-        if tool:
-            actual_name = tool.name
+        if tool_name.startswith(f"{server_name}__"):
+            actual_name = tool_name[len(server_name) + 2:]
 
         return await client.call_tool(actual_name, arguments)
 

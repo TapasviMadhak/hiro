@@ -35,6 +35,7 @@ dependencies = [
     "click>=8.1.7",
     "python-dotenv>=1.0.1",
     "pathspec>=0.12.1",
+    "keyring>=24.0.0",
 ]
 
 [project.optional-dependencies]

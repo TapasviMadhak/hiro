@@ -162,32 +162,72 @@ async def cmd_model(app: "HiroApp", args: str) -> None:
 @command(
     "key",
     aliases=["apikey"],
-    description="Set an API key for a provider. Usage: /key <provider> <key>",
-    usage="/key <provider> <api_key>",
+    description="Set/list/delete API keys. Keys are stored securely in the OS keyring (Windows Credential Manager).",
+    usage="/key [<provider> <api_key> | list | delete <provider>]",
     category="config",
 )
 async def cmd_key(app: "HiroApp", args: str) -> None:
     from hiro.config import PROVIDER_ENV_KEYS, save_settings
+    from hiro.security import keyring_set, keyring_get, keyring_delete, list_keyring_providers, _keyring_available
 
     parts = args.strip().split(None, 1)
-    if not parts:
-        # Launch interactive API key wizard
-        from hiro.ui.interactive import show_api_key_wizard
-        updated = await show_api_key_wizard(app.settings.api_keys)
-        if updated:
-            app.settings.api_keys = updated
-            save_settings(app.settings)
-            app.ui.print_success("API keys saved.")
+
+    # /key list
+    if not parts or parts[0] == "list":
+        kr_providers = list_keyring_providers()
+        env_providers = [p for p, e in PROVIDER_ENV_KEYS.items() if __import__("os").environ.get(e)]
+        lines = ["[bold]API Key Status:[/bold]\n"]
+        for p in sorted(PROVIDER_ENV_KEYS):
+            kr = "🔐 keyring" if p in kr_providers else ""
+            ev = "🌍 env var" if p in env_providers else ""
+            sources = " + ".join(filter(None, [kr, ev])) or "[dim]not set[/dim]"
+            lines.append(f"  [cyan]{p:20}[/] {sources}")
+        lines.append(f"\n[dim]Keys stored in: {'OS Keyring (secure)' if _keyring_available() else 'config.toml (fallback — keyring unavailable)'}[/dim]")
+        app.ui.console.print("\n".join(lines))
         return
 
+    # /key delete <provider>
+    if parts[0] == "delete" and len(parts) == 2:
+        provider = parts[1].lower()
+        keyring_delete(provider)
+        app.settings.api_keys.pop(provider, None)
+        app.ui.print_success(f"API key deleted for [bold]{provider}[/bold]")
+        return
+
+    # /key <provider> <key>
     if len(parts) < 2:
-        app.ui.print_error("Usage: /key <provider> <api_key>")
+        if not parts:
+            # Launch interactive API key wizard
+            from hiro.ui.interactive import show_api_key_wizard
+            updated = await show_api_key_wizard(app.settings.api_keys)
+            if updated:
+                app.settings.api_keys = updated
+                save_settings(app.settings)
+                app.ui.print_success("API keys saved securely.")
+            return
+        app.ui.print_error("Usage: /key <provider> <api_key> | /key list | /key delete <provider>")
         return
 
-    provider, key = parts[0].lower(), parts[1]
-    app.settings.api_keys[provider] = key
-    save_settings(app.settings)
-    app.ui.print_success(f"API key set for [bold]{provider}[/bold] (saved to config)")
+    provider, key = parts[0].lower(), parts[1].strip()
+
+    # Save to keyring (or TOML fallback)
+    if _keyring_available():
+        ok = keyring_set(provider, key)
+        if ok:
+            app.settings.api_keys[provider] = key
+            app.ui.print_success(f"API key for [bold]{provider}[/bold] saved to [green]OS keyring[/green] 🔐")
+        else:
+            # Keyring write failed — fall back with a warning
+            app.settings.api_keys[provider] = key
+            save_settings(app.settings)
+            app.ui.print_warning(f"Keyring write failed — key saved to config.toml as fallback")
+    else:
+        app.settings.api_keys[provider] = key
+        save_settings(app.settings)
+        app.ui.print_warning(
+            f"OS keyring not available. Key for [bold]{provider}[/bold] saved to config.toml.\n"
+            "[dim]Install a keyring backend for secure storage.[/dim]"
+        )
 
     # Refresh provider if it's current
     if provider == app.settings.provider:
@@ -198,6 +238,8 @@ async def cmd_key(app: "HiroApp", args: str) -> None:
         app.provider = gp(provider, api_key=key, base_url=base_url)
         app.agent.provider = app.provider
         app.ui.print_success("Provider refreshed with new key")
+
+
 
 
 @command(
@@ -513,6 +555,74 @@ async def cmd_patch(app: "HiroApp", args: str) -> None:
         app.ui.print_error(f"Patch failed:\n{result.stderr}")
 
 
+@command(
+    "storage",
+    aliases=["scratch", "tmp"],
+    description="Manage temporary storage and test results directory. Usage: /storage [show | set <path> | clean]",
+    usage="/storage [show | set <path> | clean]",
+    category="file",
+)
+async def cmd_storage(app: "HiroApp", args: str) -> None:
+    parts = args.strip().split(None, 1)
+    sub = parts[0].lower() if parts else "show"
+    sub_args = parts[1] if len(parts) > 1 else ""
+
+    scratch_path = Path(app.settings.scratch_dir).resolve()
+
+    if sub in ("show", ""):
+        scratch_path.mkdir(parents=True, exist_ok=True)
+        files = list(scratch_path.iterdir())
+        total_size = sum(f.stat().st_size for f in files if f.is_file())
+
+        app.ui.print_rule("Temporary Storage")
+        app.ui.console.print(f"● [bold]Path:[/bold] [cyan]{scratch_path}[/cyan]")
+        app.ui.console.print(f"● [bold]Files:[/bold] {len(files):,} ({total_size/1024:.1f} KB)")
+        app.ui.console.print(f"● [bold]Env Var:[/bold] [dim]HIRO_SCRATCH_DIR[/dim]\n")
+
+        if files:
+            app.ui.console.print("[bold]Recent Files:[/bold]")
+            for f in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[:10]:
+                sz = f.stat().st_size if f.is_file() else 0
+                app.ui.console.print(f"  • [dim]{f.name}[/] ({sz:,} B)")
+            if len(files) > 10:
+                app.ui.console.print(f"  [dim]... {len(files)-10} more files[/dim]")
+            app.ui.console.print("\n[dim]To empty temporary storage: /storage clean[/dim]")
+        else:
+            app.ui.console.print("[dim](Empty - temporary files created during scans will be stored here)[/dim]")
+        return
+
+    if sub == "set":
+        if not sub_args:
+            app.ui.print_error("Usage: /storage set <path>")
+            return
+        target = Path(sub_args.strip()).expanduser().resolve()
+        target.mkdir(parents=True, exist_ok=True)
+        app.settings.scratch_dir = str(target)
+        app.agent._tool_executor.scratch_dir = target
+        from hiro.config import save_settings
+        save_settings(app.settings)
+        app.ui.print_success(f"Temporary storage directory set to: [bold]{target}[/bold]")
+        return
+
+    if sub == "clean":
+        scratch_path.mkdir(parents=True, exist_ok=True)
+        deleted = 0
+        for item in scratch_path.iterdir():
+            try:
+                if item.is_file():
+                    item.unlink()
+                    deleted += 1
+                elif item.is_dir():
+                    shutil.rmtree(item)
+                    deleted += 1
+            except Exception:
+                pass
+        app.ui.print_success(f"Cleaned temporary storage ({deleted} items removed).")
+        return
+
+    app.ui.print_error("Usage: /storage [show | set <path> | clean]")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MCP COMMANDS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -715,7 +825,7 @@ async def cmd_scan(app: "HiroApp", args: str) -> None:
     "burp",
     aliases=["bp"],
     description="Interact with BurpSuite via MCP or local proxy",
-    usage="/burp [status | tools | proxy [url] | scan <url> | history | <tool_name>]",
+    usage="/burp [status | connect | tools | proxy [url|off] | scan <url> | <tool_name>]",
     category="security",
 )
 async def cmd_burp(app: "HiroApp", args: str) -> None:
@@ -730,88 +840,152 @@ async def cmd_burp(app: "HiroApp", args: str) -> None:
     sub = parts[0].lower() if parts else "status"
     sub_args = parts[1] if len(parts) > 1 else ""
 
-    if sub == "status" or not args:
-        import httpx
-        app.ui.print_info("Checking BurpSuite status...")
-        proxy_alive = False
-        api_alive = False
+    # ── Probe helpers ────────────────────────────────────────────────────────
+    async def _probe_sse(url: str, timeout: float = 2.0) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                r = await client.get("http://127.0.0.1:8080")
-                if r.status_code in (200, 400, 403, 500) or "burp" in r.text.lower():
-                    proxy_alive = True
+            import httpx
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                async with c.stream("GET", url, headers={"Accept": "text/event-stream, */*"}) as r:
+                    return r.status_code == 200
         except Exception:
-            pass
+            return False
 
+    async def _probe_http(url: str, timeout: float = 1.5) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=1.0) as client:
-                r = await client.get("http://127.0.0.1:1337/v0.1/version")
-                if r.status_code == 200:
-                    api_alive = True
+            import httpx
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                r = await c.get(url)
+                return r.status_code < 500
         except Exception:
-            pass
+            return False
+
+    if sub == "status" or not args:
+        app.ui.print_info("Checking BurpSuite status...")
+
+        proxy_alive = await _probe_http("http://127.0.0.1:8080")
+        mcp_sse_alive = await _probe_sse("http://127.0.0.1:9876/") or await _probe_sse("http://127.0.0.1:9876/sse")
+        api_alive = await _probe_http("http://127.0.0.1:1337/v0.1/version")
 
         current_proxy = os.environ.get("HTTP_PROXY", "(none)")
         mcp_status = f"[green]Connected ({len(burp_tools)} tools)[/]" if burp_tools else "[yellow]Not connected[/]"
         proxy_status = "[green]Active (127.0.0.1:8080)[/]" if proxy_alive else "[dim]Not responding[/]"
         api_status = "[green]Active (127.0.0.1:1337)[/]" if api_alive else "[dim]Not responding[/]"
+        sse_status = "[green]Detected! (127.0.0.1:9876)[/]" if mcp_sse_alive else "[dim]Not detected[/]"
 
         status_text = (
-            f"● BurpSuite MCP Server: {mcp_status}\n"
-            f"● Burp HTTP Proxy: {proxy_status}\n"
-            f"● Burp REST API: {api_status}\n"
-            f"● Active Environment Proxy: [cyan]{current_proxy}[/]\n\n"
+            f"● BurpSuite MCP:          {mcp_status}\n"
+            f"● Burp MCP SSE Endpoint:  {sse_status}\n"
+            f"● Burp HTTP Proxy:        {proxy_status}\n"
+            f"● Burp REST API:          {api_status}\n"
+            f"● Active Proxy Env:       [cyan]{current_proxy}[/]\n\n"
         )
+
         if burp_tools:
             status_text += "[bold]Available BurpSuite Tools:[/bold]\n"
             for t in burp_tools:
                 status_text += f"  • [cyan]{t.name}[/]: {t.description[:60]}\n"
-            status_text += "\n[dim]Usage: /burp <tool_name> <arguments_json_or_url>[/dim]"
+            status_text += "\n[dim]Usage: /burp <tool_name> <args_json_or_url>[/dim]"
+        elif mcp_sse_alive:
+            status_text += (
+                "[green bold]✓ BurpSuite MCP SSE endpoint detected on port 9876![/]\n\n"
+                "Run [bold cyan]/burp connect[/] to connect immediately."
+            )
         else:
             status_text += (
-                "[dim]To connect BurpSuite MCP, configure in ~/.config/hiro/config.toml:\n"
-                "  [[mcp_servers]]\n"
-                "  name = \"burp\"\n"
-                "  command = [\"node\", \"/path/to/burp-mcp/index.js\"]\n"
-                "  transport = \"stdio\"\n"
-                "  env = {BURP_API_KEY = \"...\", BURP_URL = \"http://localhost:1337\"}\n\n"
-                "To route CLI / web_fetch through Burp Proxy:\n"
+                "[dim]BurpSuite MCP extension not detected.\n\n"
+                "In Burp Suite:\n"
+                "  1. Extensions → BApp Store → install 'MCP Server'\n"
+                "  2. Go to the MCP tab — note the port (default: 9876)\n"
+                "  3. Run [bold]/burp connect[/] here\n\n"
+                "To route web_fetch / bash through Burp Proxy:\n"
                 "  /burp proxy http://127.0.0.1:8080[/dim]"
             )
         app.ui.print_panel(status_text, title="BurpSuite Integration")
         return
 
+    # ── /burp connect ─────────────────────────────────────────────────────────
+    if sub == "connect":
+        port = int(sub_args.strip()) if sub_args.strip().isdigit() else 9876
+        
+        # Probe root / first, then /sse
+        if await _probe_sse(f"http://127.0.0.1:{port}/"):
+            sse_url = f"http://127.0.0.1:{port}/"
+        elif await _probe_sse(f"http://127.0.0.1:{port}/sse"):
+            sse_url = f"http://127.0.0.1:{port}/sse"
+        else:
+            app.ui.print_error(
+                f"Cannot reach BurpSuite MCP SSE endpoint at port {port}.\n"
+                "Make sure BurpSuite is running with the MCP Server extension enabled.\n"
+                f"Try: /burp connect <port>  if using a non-default port."
+            )
+            return
+
+        app.ui.print_info(f"Connecting to Burp MCP at {sse_url} …")
+
+        from hiro.config import MCPServerConfig, save_settings
+        existing_cfg = next((s for s in app.settings.mcp_servers if s.name == "burp"), None)
+        if existing_cfg:
+            existing_cfg.url = sse_url
+            existing_cfg.transport = "sse"
+            existing_cfg.enabled = True
+            save_settings(app.settings)
+        else:
+            new_cfg = MCPServerConfig(
+                name="burp",
+                url=sse_url,
+                transport="sse",
+                enabled=True,
+                tags=["security", "burp"],
+                description="BurpSuite MCP Server (SSE)",
+            )
+            app.settings.mcp_servers.append(new_cfg)
+            save_settings(app.settings)
+
+        burp_cfg = next(s for s in app.settings.mcp_servers if s.name == "burp")
+        try:
+            ok = await app.mcp.reconnect("burp", burp_cfg)
+            if ok:
+                tools = app.mcp.get_tools_for_server("burp")
+                app.ui.print_success(
+                    f"Connected to BurpSuite MCP!\n"
+                    f"[bold]{len(tools)} tools[/bold] are now active. Try: [bold cyan]/burp tools[/bold cyan]"
+                )
+            else:
+                err = app.mcp.failed_servers().get("burp", "Unknown error")
+                app.ui.print_error(f"Connection failed: {err}")
+        except Exception as e:
+            app.ui.print_error(f"Connection failed: {e}")
+        return
+
+    # ── /burp proxy ───────────────────────────────────────────────────────────
     if sub == "proxy":
         proxy_target = sub_args.strip() if sub_args else "http://127.0.0.1:8080"
         if proxy_target in ("off", "none", "disable"):
-            os.environ.pop("HTTP_PROXY", None)
-            os.environ.pop("HTTPS_PROXY", None)
-            os.environ.pop("http_proxy", None)
-            os.environ.pop("https_proxy", None)
+            for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                os.environ.pop(k, None)
             app.ui.print_success("Burp proxy routing disabled.")
         else:
-            os.environ["HTTP_PROXY"] = proxy_target
-            os.environ["HTTPS_PROXY"] = proxy_target
-            os.environ["http_proxy"] = proxy_target
-            os.environ["https_proxy"] = proxy_target
-            app.ui.print_success(f"Traffic routing configured to proxy: {proxy_target}")
+            for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                os.environ[k] = proxy_target
+            app.ui.print_success(f"Traffic routed through proxy: {proxy_target}")
         return
 
+    # ── /burp tools ───────────────────────────────────────────────────────────
     if sub == "tools":
         if not burp_tools:
-            app.ui.print_warning("No BurpSuite MCP tools connected.")
+            app.ui.print_warning("No BurpSuite MCP tools connected. Try: /burp connect")
             return
         rows = [[t.name, t.description[:70]] for t in burp_tools]
         app.ui.print_table(["Tool", "Description"], rows, title="BurpSuite MCP Tools")
         return
 
+    # ── Fallback: no tools connected ─────────────────────────────────────────
     if not burp_tools:
-        # Fall back to asking agent to analyze or test target
         app.ui.print_warning("BurpSuite MCP is not connected. Sending request to AI security analyzer...")
         await app.run_query(f"Using cybersecurity and pentesting methodology, perform: {args}")
         return
 
-    # Match tool
+    # ── Call specific Burp tool ───────────────────────────────────────────────
     matching = [t for t in burp_tools if sub == t.name.lower() or sub in t.name.lower()]
     if not matching:
         tool_names = [t.name for t in burp_tools]
@@ -829,6 +1003,7 @@ async def cmd_burp(app: "HiroApp", args: str) -> None:
     app.ui.print_info(f"Calling BurpSuite tool: {tool.name}")
     result = await app.mcp.call_tool(tool.name, call_args)
     app.ui.print_panel(result.to_text(), title=f"BurpSuite: {tool.name}")
+
 
 
 @command(

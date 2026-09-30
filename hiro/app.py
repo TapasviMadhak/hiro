@@ -329,25 +329,34 @@ class HiroApp:
         text_buffer: list[str] = []
         events_pending: list[AgentEvent] = []
         display_started = False
+        current_step = 1
+        max_steps = self.settings.agent.max_turns
+        final_answer = ""
 
         proc = ProcessingDisplay(self.ui.console, self.settings.model, t)
 
         def on_event(evt: AgentEvent) -> None:
-            nonlocal last_usage, display_started
+            nonlocal last_usage, display_started, current_step, max_steps, final_answer
 
-            if evt.type == "text":
+            if evt.type == "step":
+                current_step = evt.data.get("iteration", current_step)
+                max_steps = evt.data.get("max_turns", max_steps)
+
+            elif evt.type == "text":
                 if not display_started:
-                    # First text: update status to "Responding"
                     proc.update("Responding")
                 text_buffer.append(evt.data)
 
+            elif evt.type == "final_response":
+                final_answer = evt.data
+
             elif evt.type == "tool_start":
                 tc = evt.data
-                proc.update(f"Tool: {tc.name}")
+                proc.update(f"Step {current_step}/{max_steps} · Tool: {tc.name}")
                 tool_times[tc.id] = time.monotonic()
 
             elif evt.type == "tool_end":
-                proc.update("Thinking")
+                proc.update(f"Step {current_step}/{max_steps} · Thinking")
                 tc = evt.data["call"]
                 result = evt.data["result"]
                 elapsed = (time.monotonic() - tool_times.get(tc.id, time.monotonic())) * 1000
@@ -361,36 +370,54 @@ class HiroApp:
                 last_usage = evt.data
 
             elif evt.type == "thinking":
-                proc.update(evt.data[:40])
+                proc.update(f"Step {current_step}/{max_steps} · {evt.data[:30]}")
 
         # Run with live processing display
         with proc:
-            await self.agent.run(user_input, on_event=on_event)
+            result_text = await self.agent.run(user_input, on_event=on_event)
+            if not final_answer and result_text:
+                final_answer = result_text
 
-        # Now render everything (after spinner exits / screen is clear)
-        self.ui.console.print()
+        # 1. Print any tool results / errors that happened
+        if events_pending:
+            self.ui.console.print()
+            for evt in events_pending:
+                if evt.type == "tool_end_render":
+                    tc = evt.data["call"]
+                    self.ui.print_tool_end(tc.name, evt.data["result"], evt.data["ms"])
+                elif evt.type == "error_render":
+                    self.ui.print_error(evt.data)
+            self.ui.console.print()
 
-        # Print assistant label + streamed text
-        self.ui.print_assistant_start()
-        full_text = "".join(text_buffer)
-        if full_text:
-            self.ui.print_text_chunk(full_text)
-        self.ui.print_newline()
+        # 2. Print assistant label + final synthesized response
+        answer_to_render = final_answer or "".join(text_buffer).strip()
+        if answer_to_render:
+            self.ui.print_assistant_start()
+            self.ui.print_text_chunk(answer_to_render)
+            self.ui.print_newline()
 
-        # Print any tool results / errors that happened
-        for evt in events_pending:
-            if evt.type == "tool_end_render":
-                tc = evt.data["call"]
-                self.ui.print_tool_end(tc.name, evt.data["result"], evt.data["ms"])
-            elif evt.type == "error_render":
-                self.ui.print_error(evt.data)
-
+        # 3. Print token usage & duration footer
         elapsed_ms = (time.monotonic() - t0) * 1000
+        from hiro.config import get_model_info
+        minfo = get_model_info(self.settings.model)
+        model_ctx = minfo.get("ctx", self.settings.agent.token_budget)
+        budget = min(self.settings.agent.token_budget, model_ctx)
+        ctx_est = self.agent.ctx.token_estimate()
+
         if last_usage:
-            self.ui.print_usage(last_usage, elapsed_ms)
+            self.ui.print_usage(
+                usage=last_usage,
+                latency_ms=elapsed_ms,
+                ctx_tokens=ctx_est,
+                token_limit=budget,
+                steps=current_step,
+                max_steps=max_steps,
+            )
         elif self.settings.ui.show_timing:
+            sec = elapsed_ms / 1000
+            time_str = f"{int(sec//60)}m {sec%60:.1f}s" if sec >= 60 else f"{sec:.1f}s"
             self.ui.console.print(
-                Text(f"  {elapsed_ms/1000:.1f}s", style=f"dim {t['muted']}")
+                Text(f"  {time_str}", style=f"dim {t['muted']}")
             )
         self.ui.console.print()
 

@@ -1,0 +1,50 @@
+{
+  "name": "hiro-ai",
+  "version": "0.1.0",
+  "description": "Claude Code-grade terminal AI coding assistant with multi-provider support, MCP integration, and cybersecurity tooling",
+  "main": "bin/hiro.js",
+  "bin": {
+    "hiro": "./bin/hiro.js",
+    "hiro-ai": "./bin/hiro.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "start": "node ./bin/hiro.js",
+    "test": "python -m pytest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TapasviMadhak/hiro.git"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "terminal",
+    "coding-assistant",
+    "mcp",
+    "cybersecurity",
+    "burpsuite",
+    "llm",
+    "claude-code",
+    "gemini",
+    "openai",
+    "nvidia-nim",
+    "anthropic"
+  ],
+  "author": "Tapasvi Madhak",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "hiro/",
+    "pyproject.toml",
+    "README.md",
+    "hiro.toml.example"
+  ],
+  "bugs": {
+    "url": "https://github.com/TapasviMadhak/hiro/issues"
+  },
+  "homepage": "https://github.com/TapasviMadhak/hiro#readme"
+}

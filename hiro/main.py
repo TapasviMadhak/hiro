@@ -120,8 +120,18 @@ async def _async_main(
     from hiro.config import load_settings, MCPServerConfig
     from hiro.app import HiroApp
 
-    # Load settings
+    # ── Security: install log redaction BEFORE loading settings ─────────────
+    try:
+        from hiro.security import install_log_redaction, install_precommit_hook
+        install_log_redaction()
+        # Auto-install pre-commit hook in git repos (silent, best-effort)
+        install_precommit_hook(".")
+    except Exception:
+        pass
+
+    # Load settings (auto-migrates plaintext keys to OS keyring)
     settings = _load_settings_cli(config_path)
+
 
     # Apply CLI overrides
     if model:

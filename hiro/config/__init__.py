@@ -22,11 +22,13 @@ CONFIG_DIR = Path.home() / ".config" / "hiro"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 HISTORY_FILE = CONFIG_DIR / "history"
 SESSIONS_DIR = CONFIG_DIR / "sessions"
+SCRATCH_DIR = CONFIG_DIR / "scratch"
 
 
 def ensure_dirs() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── Model Registry ──────────────────────────────────────────────────────────
@@ -124,7 +126,7 @@ class MCPServerConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    max_turns: int = 50
+    max_turns: int = 15
     max_tokens_per_turn: int = 8192
     token_budget: int = 200000
     auto_compact: bool = True
@@ -167,9 +169,10 @@ class Settings(BaseModel):
     # UI
     ui: UIConfig = Field(default_factory=UIConfig)
 
-    # Shell
+    # Shell & Storage
     shell: str = ""  # auto-detect
     working_directory: str = ""  # empty = cwd
+    scratch_dir: str = str(SCRATCH_DIR)  # temporary test & output folder
 
     # Security
     allow_shell: bool = True
@@ -183,41 +186,87 @@ _settings: Settings | None = None
 
 
 def load_settings(config_path: Path | None = None) -> Settings:
-    """Load settings from config file and environment variables."""
+    """Load settings from config file and environment variables.
+    
+    Priority: keyring > env vars > config file > defaults
+    API keys are NEVER persisted in the TOML file.
+    """
     global _settings
 
     path = config_path or CONFIG_FILE
     raw: dict[str, Any] = {}
 
-    # Load from .env if exists
+    # Load from .env if exists (but never override keyring or explicit env)
     env_file = Path.cwd() / ".env"
     if env_file.exists():
         from dotenv import load_dotenv
         load_dotenv(env_file, override=False)
 
-    # Load TOML config
+    # Load TOML config (strip any accidentally-saved api_keys from old versions)
     if path.exists():
         with open(path, "rb") as f:
             raw = tomllib.load(f)
+        # If old config has plaintext keys, we will migrate them to keyring below
+        _legacy_keys: dict[str, str] = raw.pop("api_keys", {})
+    else:
+        _legacy_keys = {}
 
     settings = Settings(**raw) if raw else Settings()
 
-    # Apply env var overrides
+    # 1. Load from OS keyring (most secure)
+    try:
+        from hiro.security import keyring_get, keyring_set, _keyring_available
+        if _keyring_available():
+            for provider in PROVIDER_ENV_KEYS:
+                key = keyring_get(provider)
+                if key:
+                    settings.api_keys[provider] = key
+            # Migrate legacy plaintext keys to keyring and remove from TOML
+            for provider, key in _legacy_keys.items():
+                if key and provider not in settings.api_keys:
+                    settings.api_keys[provider] = key
+                    keyring_set(provider, key)
+            if _legacy_keys:
+                # Rewrite TOML without the plaintext keys
+                _migrate_save(settings, path)
+        else:
+            # No keyring backend: fall back to keeping keys in TOML (with warning)
+            for provider, key in _legacy_keys.items():
+                if key and provider not in settings.api_keys:
+                    settings.api_keys[provider] = key
+    except Exception:
+        for provider, key in _legacy_keys.items():
+            if key and provider not in settings.api_keys:
+                settings.api_keys[provider] = key
+
+    # 2. Apply env var overrides (lower priority than keyring)
     for provider, env_key in PROVIDER_ENV_KEYS.items():
         val = os.environ.get(env_key, "")
         if val and provider not in settings.api_keys:
             settings.api_keys[provider] = val
 
-    # Model env var
+    # 3. Model env var
     if model_env := os.environ.get("HIRO_MODEL"):
         settings.model = model_env
 
-    # Resolve provider from model
+    # 4. Resolve provider from model
     if not settings.provider:
         settings.provider = _infer_provider(settings.model)
 
     _settings = settings
     return settings
+
+
+def _migrate_save(settings: Settings, path: Path) -> None:
+    """Rewrite config TOML without api_keys (migration helper)."""
+    try:
+        clean = settings.model_copy(update={"api_keys": {}})
+        data = clean.model_dump(exclude_none=True)
+        data.pop("api_keys", None)
+        with open(path, "wb") as f:
+            tomli_w.dump(data, f)
+    except Exception:
+        pass
 
 
 def get_settings() -> Settings:
@@ -228,10 +277,27 @@ def get_settings() -> Settings:
 
 
 def save_settings(settings: Settings, path: Path | None = None) -> None:
-    """Persist settings to TOML config."""
+    """Persist settings to TOML config. API keys are stored in the OS keyring, NOT in TOML."""
     ensure_dirs()
     target = path or CONFIG_FILE
-    data = settings.model_dump(exclude_none=True)
+
+    # Migrate any api_keys from settings into keyring, then strip them from the serialised data
+    try:
+        from hiro.security import keyring_set, _keyring_available
+        if _keyring_available():
+            for provider, key in list(settings.api_keys.items()):
+                if key:
+                    keyring_set(provider, key)
+            # Remove keys from the in-memory dict so they don't land in TOML
+            settings_to_save = settings.model_copy(update={"api_keys": {}})
+        else:
+            settings_to_save = settings
+    except Exception:
+        settings_to_save = settings
+
+    data = settings_to_save.model_dump(exclude_none=True)
+    # Always strip api_keys from TOML output as a safety net
+    data.pop("api_keys", None)
     with open(target, "wb") as f:
         tomli_w.dump(data, f)
 
@@ -260,12 +326,20 @@ def _infer_provider(model: str) -> str:
 
 
 def get_api_key(provider: str, settings: Settings | None = None) -> str:
-    """Get API key for a provider."""
+    """Get API key for a provider. Checks keyring > settings > env vars."""
     s = settings or get_settings()
-    # Check config
+    # 1. In-memory settings (already loaded from keyring on startup)
     if key := s.api_keys.get(provider):
         return key
-    # Check env
+    # 2. Try keyring directly (in case settings not yet populated)
+    try:
+        from hiro.security import keyring_get, _keyring_available
+        if _keyring_available():
+            if key := keyring_get(provider):
+                return key
+    except Exception:
+        pass
+    # 3. Environment variable fallback
     env_key = PROVIDER_ENV_KEYS.get(provider, f"{provider.upper()}_API_KEY")
     return os.environ.get(env_key, "")
 

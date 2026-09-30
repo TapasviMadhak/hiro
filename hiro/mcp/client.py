@@ -296,49 +296,69 @@ class SSEMCPClient:
         self._lock = asyncio.Lock()
         self._reader_task: asyncio.Task | None = None
         self._http_client = None
+        self._endpoint_ready = asyncio.Event()
 
     async def connect(self) -> dict:
         import httpx
         self._http_client = httpx.AsyncClient(headers=self.headers, timeout=60.0)
+        self._endpoint_ready.clear()
         self._reader_task = asyncio.create_task(self._sse_loop())
-        # Wait for endpoint event
-        await asyncio.sleep(0.5)
+        # Wait for endpoint event from SSE stream
+        try:
+            await asyncio.wait_for(self._endpoint_ready.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pass
         result = await self._initialize()
         return result
 
     async def _sse_loop(self) -> None:
-        import httpx
+        import urllib.parse
         assert self._http_client
-        async with self._http_client.stream("GET", self.url, headers={
-            "Accept": "text/event-stream",
-            **self.headers,
-        }) as resp:
-            async for line in resp.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:].strip()
-                    if not data or data == "[DONE]":
+        current_event = None
+        try:
+            async with self._http_client.stream("GET", self.url, headers={
+                "Accept": "text/event-stream",
+                **self.headers,
+            }) as resp:
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line:
+                        current_event = None
                         continue
-                    try:
-                        msg = json.loads(data)
-                    except json.JSONDecodeError:
-                        # Could be endpoint URL
-                        if data.startswith("http"):
-                            self._session_url = data
-                        continue
+                    if line.startswith("event:"):
+                        current_event = line.split(":", 1)[1].strip()
+                    elif line.startswith("data:"):
+                        data = line.split(":", 1)[1].strip()
+                        if not data or data == "[DONE]":
+                            continue
+                        if current_event == "endpoint":
+                            self._session_url = urllib.parse.urljoin(self.url, data)
+                            self._endpoint_ready.set()
+                            continue
 
-                    msg_id = msg.get("id")
-                    if msg_id is not None and msg_id in self._pending:
-                        fut = self._pending.pop(msg_id)
-                        if "error" in msg:
-                            err = msg["error"]
-                            fut.set_exception(MCPError(
-                                err.get("code", -1),
-                                err.get("message", "Unknown"),
-                            ))
-                        else:
-                            fut.set_result(msg.get("result", {}))
-                elif line.startswith("event: endpoint"):
-                    pass
+                        try:
+                            msg = json.loads(data)
+                        except json.JSONDecodeError:
+                            if data.startswith("http") or data.startswith("?") or data.startswith("/"):
+                                self._session_url = urllib.parse.urljoin(self.url, data)
+                                self._endpoint_ready.set()
+                            continue
+
+                        msg_id = msg.get("id")
+                        if msg_id is not None and msg_id in self._pending:
+                            fut = self._pending.pop(msg_id)
+                            if "error" in msg:
+                                err = msg["error"]
+                                fut.set_exception(MCPError(
+                                    err.get("code", -1),
+                                    err.get("message", "Unknown"),
+                                ))
+                            else:
+                                fut.set_result(msg.get("result", {}))
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
     async def _initialize(self) -> dict:
         result = await self._request("initialize", {
@@ -357,7 +377,7 @@ class SSEMCPClient:
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[req_id] = fut
 
-        target_url = self._session_url or self.url.replace("/sse", "/message")
+        target_url = self._session_url or (self.url.rstrip("/") + "/message")
         assert self._http_client
         await self._http_client.post(target_url, json={
             "jsonrpc": "2.0",
@@ -369,7 +389,7 @@ class SSEMCPClient:
         return await asyncio.wait_for(fut, timeout=30.0)
 
     async def _notify(self, method: str, params: dict = None) -> None:
-        target_url = self._session_url or self.url.replace("/sse", "/message")
+        target_url = self._session_url or (self.url.rstrip("/") + "/message")
         assert self._http_client
         await self._http_client.post(target_url, json={
             "jsonrpc": "2.0",
