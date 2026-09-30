@@ -555,72 +555,7 @@ async def cmd_patch(app: "HiroApp", args: str) -> None:
         app.ui.print_error(f"Patch failed:\n{result.stderr}")
 
 
-@command(
-    "storage",
-    aliases=["scratch", "tmp"],
-    description="Manage temporary storage and test results directory. Usage: /storage [show | set <path> | clean]",
-    usage="/storage [show | set <path> | clean]",
-    category="file",
-)
-async def cmd_storage(app: "HiroApp", args: str) -> None:
-    parts = args.strip().split(None, 1)
-    sub = parts[0].lower() if parts else "show"
-    sub_args = parts[1] if len(parts) > 1 else ""
 
-    scratch_path = Path(app.settings.scratch_dir).resolve()
-
-    if sub in ("show", ""):
-        scratch_path.mkdir(parents=True, exist_ok=True)
-        files = list(scratch_path.iterdir())
-        total_size = sum(f.stat().st_size for f in files if f.is_file())
-
-        app.ui.print_rule("Temporary Storage")
-        app.ui.console.print(f"● [bold]Path:[/bold] [cyan]{scratch_path}[/cyan]")
-        app.ui.console.print(f"● [bold]Files:[/bold] {len(files):,} ({total_size/1024:.1f} KB)")
-        app.ui.console.print(f"● [bold]Env Var:[/bold] [dim]HIRO_SCRATCH_DIR[/dim]\n")
-
-        if files:
-            app.ui.console.print("[bold]Recent Files:[/bold]")
-            for f in sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)[:10]:
-                sz = f.stat().st_size if f.is_file() else 0
-                app.ui.console.print(f"  • [dim]{f.name}[/] ({sz:,} B)")
-            if len(files) > 10:
-                app.ui.console.print(f"  [dim]... {len(files)-10} more files[/dim]")
-            app.ui.console.print("\n[dim]To empty temporary storage: /storage clean[/dim]")
-        else:
-            app.ui.console.print("[dim](Empty - temporary files created during scans will be stored here)[/dim]")
-        return
-
-    if sub == "set":
-        if not sub_args:
-            app.ui.print_error("Usage: /storage set <path>")
-            return
-        target = Path(sub_args.strip()).expanduser().resolve()
-        target.mkdir(parents=True, exist_ok=True)
-        app.settings.scratch_dir = str(target)
-        app.agent._tool_executor.scratch_dir = target
-        from hiro.config import save_settings
-        save_settings(app.settings)
-        app.ui.print_success(f"Temporary storage directory set to: [bold]{target}[/bold]")
-        return
-
-    if sub == "clean":
-        scratch_path.mkdir(parents=True, exist_ok=True)
-        deleted = 0
-        for item in scratch_path.iterdir():
-            try:
-                if item.is_file():
-                    item.unlink()
-                    deleted += 1
-                elif item.is_dir():
-                    shutil.rmtree(item)
-                    deleted += 1
-            except Exception:
-                pass
-        app.ui.print_success(f"Cleaned temporary storage ({deleted} items removed).")
-        return
-
-    app.ui.print_error("Usage: /storage [show | set <path> | clean]")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1485,59 +1420,7 @@ async def cmd_import(app: "HiroApp", args: str) -> None:
         await cmd_file(app, target)
 
 
-@command(
-    "diff",
-    description="Show git diff or compare two files",
-    usage="/diff [file1 file2 | branch/commit]",
-    category="file",
-)
-async def cmd_diff(app: "HiroApp", args: str) -> None:
-    parts = args.strip().split()
-    if len(parts) == 2 and Path(parts[0]).exists() and Path(parts[1]).exists():
-        import difflib
-        p1, p2 = Path(parts[0]), Path(parts[1])
-        t1 = p1.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-        t2 = p2.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-        diff = "".join(difflib.unified_diff(t1, t2, fromfile=str(p1), tofile=str(p2)))
-        if not diff:
-            app.ui.print_info("Files are identical.")
-        else:
-            app.ui.print_code(diff, "diff")
-        return
 
-    # Fall back to git diff
-    cmd = f"git diff {args}".strip()
-    result = await app.agent._tool_executor.execute("bash", {"command": cmd})
-    if not result or result == "(no output)":
-        app.ui.print_info("No git changes detected.")
-    else:
-        app.ui.print_code(result, "diff")
-
-
-@command(
-    "patch",
-    description="Apply unified diff patch to a file",
-    usage="/patch <file> <patch_content_or_file>",
-    category="file",
-)
-async def cmd_patch(app: "HiroApp", args: str) -> None:
-    if not args:
-        app.ui.print_error("Usage: /patch <target_file> [patch_file]")
-        return
-    parts = args.strip().split(None, 1)
-    target_path = Path(parts[0])
-    if not target_path.exists():
-        app.ui.print_error(f"File not found: {target_path}")
-        return
-
-    if len(parts) > 1 and Path(parts[1]).exists():
-        patch_file = parts[1]
-        cmd = f"git apply {patch_file}"
-        res = await app.agent._tool_executor.execute("bash", {"command": cmd})
-        app.ui.print_panel(res, title=f"Patch Applied to {target_path}")
-    else:
-        app.ui.print_info("Send patch instructions to agent...")
-        await app.run_query(f"Review and apply patch to {target_path}: {args}")
 
 
 @command(

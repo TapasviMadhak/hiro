@@ -6,16 +6,22 @@ from __future__ import annotations
 
 import json
 import time
-from typing import AsyncIterator, Any
+from collections.abc import AsyncIterator
+from typing import Any
 
 from .base import (
-    BaseProvider, Message, ToolCall, ToolDefinition,
-    StreamChunk, CompletionResponse, Usage
+    BaseProvider,
+    CompletionResponse,
+    Message,
+    StreamChunk,
+    ToolCall,
+    ToolDefinition,
+    Usage,
 )
 
 
-def _convert_messages(messages: list[Message]) -> list[dict]:
-    result = []
+def _convert_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
     for msg in messages:
         if msg.role == "tool":
             result.append({
@@ -47,7 +53,7 @@ def _convert_messages(messages: list[Message]) -> list[dict]:
     return result
 
 
-def _convert_tools(tools: list[ToolDefinition]) -> list[dict]:
+def _convert_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     return [
         {
             "type": "function",

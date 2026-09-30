@@ -3,13 +3,18 @@ Google Gemini provider using the Google GenAI SDK.
 """
 from __future__ import annotations
 
-import json
 import time
-from typing import AsyncIterator, Any
+from collections.abc import AsyncIterator
+from typing import Any
 
 from .base import (
-    BaseProvider, Message, ToolCall, ToolDefinition,
-    StreamChunk, CompletionResponse, Usage
+    BaseProvider,
+    CompletionResponse,
+    Message,
+    StreamChunk,
+    ToolCall,
+    ToolDefinition,
+    Usage,
 )
 
 
@@ -25,8 +30,8 @@ class GoogleProvider(BaseProvider):
         except ImportError:
             raise ImportError("Install google-generativeai: pip install google-generativeai")
 
-    def _build_contents(self, messages: list[Message]) -> list[dict]:
-        contents = []
+    def _build_contents(self, messages: list[Message]) -> list[dict[str, Any]]:
+        contents: list[dict[str, Any]] = []
         for msg in messages:
             if msg.role == "system":
                 continue
@@ -53,7 +58,7 @@ class GoogleProvider(BaseProvider):
                 })
         return contents
 
-    def _build_tools(self, tools: list[ToolDefinition]) -> list[dict]:
+    def _build_tools(self, tools: list[ToolDefinition]) -> list[dict[str, Any]]:
         return [{
             "function_declarations": [
                 {

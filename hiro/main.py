@@ -6,15 +6,16 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import os
 from pathlib import Path
 
 import click
 
 if sys.platform == "win32":
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore
     except Exception:
         pass
 
@@ -37,6 +38,7 @@ if sys.platform == "win32":
 @click.option("--mcp-server", multiple=True, help="Extra MCP server (name:command)")
 @click.option("--url", default="", help="Custom base URL for provider")
 @click.option("--stream/--no-stream", default=True, help="Enable/disable streaming")
+@click.option("--session", "-id", default="", help="Session ID to load/resume")
 def main(
     prompt: tuple,
     model: str,
@@ -55,6 +57,7 @@ def main(
     mcp_server: tuple,
     url: str,
     stream: bool,
+    session: str,
 ) -> None:
     """
     Hiro — Terminal AI coding assistant.
@@ -75,7 +78,6 @@ def main(
         sys.exit(0)
 
     if list_models:
-        from hiro.config import list_models as lm, get_api_key
         settings = _load_settings_cli(config)
         _print_models(settings)
         sys.exit(0)
@@ -96,6 +98,7 @@ def main(
         extra_mcp_servers=mcp_server,
         base_url=url,
         stream=stream,
+        session_id=session,
     ))
 
 
@@ -115,10 +118,11 @@ async def _async_main(
     extra_mcp_servers: tuple,
     base_url: str,
     stream: bool,
+    session_id: str,
 ) -> None:
     """Async entry point."""
-    from hiro.config import load_settings, MCPServerConfig
     from hiro.app import HiroApp
+    from hiro.config import MCPServerConfig
 
     # ── Security: install log redaction BEFORE loading settings ─────────────
     try:
@@ -190,7 +194,7 @@ async def _async_main(
     settings.ui.stream = stream
 
     # Create and run app
-    app = HiroApp(settings)
+    app = HiroApp(settings, session_id=session_id)
 
     # Initialize MCP if not disabled
     if not no_mcp and settings.mcp_servers:
@@ -209,17 +213,17 @@ async def _async_main(
 
 def _load_settings_cli(config_path: str):
     from hiro.config import load_settings
-    from pathlib import Path
     path = Path(config_path) if config_path else None
     return load_settings(path)
 
 
 def _print_models(settings) -> None:
     """Print all available models."""
-    from hiro.config import BUILTIN_MODELS, get_api_key
+    from rich import box
     from rich.console import Console
     from rich.table import Table
-    from rich import box
+
+    from hiro.config import BUILTIN_MODELS, get_api_key
 
     console = Console(legacy_windows=False)
     table = Table(box=box.ROUNDED, title="Available Models", show_header=True)

@@ -245,10 +245,35 @@ def print_chat_header(console: Console, model: str, provider: str, theme: dict) 
 class HiroApp:
     """The main Hiro application."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, session_id: str = "") -> None:
+        import datetime
+        import json
+        from pathlib import Path
+        from hiro.config import ensure_dirs, SESSIONS_DIR
+        ensure_dirs()
+        self.session_id = session_id or f"sess_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
         self.settings = settings
         self.running = True
         self._in_chat = False  # tracks whether we've sent at least one message
+
+        # Set session-specific scratch directory
+        self.settings.scratch_dir = str((SESSIONS_DIR / self.session_id / "scratch").resolve())
+        Path(self.settings.scratch_dir).mkdir(parents=True, exist_ok=True)
+        
+        session_file = SESSIONS_DIR / f"{self.session_id}.json"
+        self._initial_messages = []
+        if session_id and session_file.exists():
+            try:
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+                from hiro.providers.base import Message
+                for msg in data.get("messages", []):
+                    self._initial_messages.append(Message(
+                        role=msg["role"],
+                        content=msg["content"]
+                    ))
+            except Exception:
+                pass
 
         # Initialize UI
         self.ui = HiroRenderer(config=settings.ui)
@@ -274,6 +299,8 @@ class HiroApp:
             settings=settings,
             mcp_manager=self.mcp,
         )
+        if hasattr(self, "_initial_messages") and self._initial_messages:
+            self.agent.ctx.messages.extend(self._initial_messages)
 
         # Import all commands (side effect: registers them)
         import hiro.commands  # noqa
@@ -561,4 +588,27 @@ class HiroApp:
                 traceback.print_exc()
 
         # Cleanup
+        self._save_session()
+        self.ui.console.print(f"\n[dim]Session saved. To resume, run:[/dim]\n[bold cyan]hiro -id {self.session_id}[/bold cyan]\n")
         await self.mcp.disconnect_all()
+
+    def _save_session(self) -> None:
+        from hiro.config import SESSIONS_DIR
+        import json
+        path = SESSIONS_DIR / f"{self.session_id}.json"
+        data = {
+            "model": self.settings.model,
+            "provider": self.settings.provider,
+            "messages": [
+                {
+                    "role": m.role,
+                    "content": m.content if isinstance(m.content, str) else str(m.content),
+                }
+                for m in self.agent.ctx.messages
+            ],
+            "usage": {
+                "input": self.agent.ctx.total_usage.input_tokens,
+                "output": self.agent.ctx.total_usage.output_tokens,
+            }
+        }
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
